@@ -1,44 +1,66 @@
 # to run the server: poetry run python3 main.py
 # to test the server: curl localhost:8000/rt-notification
-# curl --header "Content-Type: application/json" --request POST --data '{"video_link":"s3link"}' http://localhost:8000/video-clip
+# curl --header "Content-Type: application/json" --request POST --data '{"message":"BIRD!!"}' http://localhost:8000/rt-notification
 
-import os
-import yaml
-import requests
-import fastapi
+from typing import List
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import pydantic
-from dotenv import load_dotenv
+from dotenv import load_dotenv  
 import uvicorn
 
 class RTNotificationTestInput(pydantic.BaseModel):
     message: str
 
-# Load environment variables
 class VideoClipRequest(pydantic.BaseModel):
     video_link: str
 
-load_dotenv()
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
 
-app = fastapi.FastAPI()
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+# Load environment variables
+load_dotenv()
+# init server
+app = FastAPI()
+
+manager = ConnectionManager()
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.send_personal_message(f"Websocke connection complete!", websocket)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        print("Client disconnected")
 
 # Route is hit by device, pushes notification to front-end
 # Mocking the front-end with rt-notification-test, to be removed later
 @app.get("/rt-notification")
-def push_rt_notif():
+async def push_rt_notif():
     # push the notification to the front-end
-    requests.post("http://localhost:8000/rt-notification-test", json={"message": "Hello World"})
+    await manager.broadcast("RT Notification: Birds at the feeder!")
     # upload to s3 bucket
     
 @app.post("/video-clip")
-def push_video_clip_notif(data: VideoClipRequest):
+async def push_video_clip_notif(data: VideoClipRequest):
     # push the video to the front-end
-    print(data.video_link)
-    # upload to s3 bucket
-
-
-@app.post("/rt-notification-test")
-def rt_notif_test(data: RTNotificationTestInput):
-    print(data.message)
+    await manager.broadcast(data.video_link)
 
 if __name__ == "__main__":
-    uvicorn.run(app=app, host="127.0.0.1", port=8000)
+    uvicorn.run(app=app, host="localhost", port=8000)
