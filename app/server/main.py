@@ -7,9 +7,14 @@ from dotenv import load_dotenv
 import pydantic
 import uvicorn
 import boto3
+import json
+import asyncio
+import websockets
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 import sys
+from botocore import UNSIGNED
+from botocore.client import Config
 
 class RTNotificationTestInput(pydantic.BaseModel):
     message: str
@@ -46,21 +51,79 @@ load_dotenv()
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
+        await manager.broadcast(json.dumps({
+                        "action": "schedule_notification",
+                        "title": "test",
+                        "body": "body",
+                        "delay": 5
+                    }))
+        await manager.broadcast(json.dumps({"message": "Connected to notification server"}))
         while True:
             data = await websocket.receive_text()
-            await manager.send_personal_message(f"Websocke connection complete!", websocket)
+            print(data)
+            try:
+                json_data = json.loads(data)
+                action = json_data.get('action')
+                print('parsed action', action)
+                
+                if action == 'schedule_notification':
+                    title = json_data.get('title', 'Notification')
+                    body = json_data.get('body', 'You have a new notification')
+                    delay = json_data.get('delay', 5)
+                    
+                    # Send the notification data back to the client
+                    await manager.broadcast(json.dumps({
+                        "action": "schedule_notification",
+                        "title": title,
+                        "body": body,
+                        "delay": delay
+                    }))
+                    print("I got here")
+                else:
+                    await manager.broadcast(json.dumps({"error": "Invalid action"}))
+            
+            except json.JSONDecodeError:
+                await manager.broadcast(json.dumps({"error": "Invalid JSON"}))
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         print("Client disconnected")
 
 # Route is hit by device, pushes notification to front-end
 # Mocking the front-end with rt-notification-test, to be removed later
-@app.get("/rt-notification")
+@app.get("/rt-notification-bird")
 async def push_rt_notif():
     # push the notification to the front-end
-    print("Pushing notification to front-end")
-    await manager.broadcast("RT Notification: Birds at the feeder!")
-    # upload to s3 bucket
+    uri = "ws://34.205.232.48:8000/ws"
+    async with websockets.connect(uri) as websocket:
+        message = json.dumps({
+            "action": "schedule_notification",
+            "title": "Bird arrived",
+            "body": "A bird has shown up at the birdfeeder!",
+            "delay": 1
+        })
+        print(f"Sending message: {message}")
+        await websocket.send(message)
+        print("Message sent, waiting for response...")
+        response = await websocket.recv()
+        print(f"Received response: {response}")
+
+@app.get("/rt-notification-seed")
+async def push_rt_notif():
+    # push the notification to the front-end
+    uri = "ws://34.205.232.48:8000/ws"
+    async with websockets.connect(uri) as websocket:
+        message = json.dumps({
+            "action": "schedule_notification",
+            "title": "Seed is low",
+            "body": "Please refill the seed in the birdfeeder",
+            "delay": 1
+        })
+        print(f"Sending message: {message}")
+        await websocket.send(message)
+        print("Message sent, waiting for response...")
+        response = await websocket.recv()
+        print(f"Received response: {response}")
     
 @app.post("/video-clip")
 async def push_video_clip_notif(data: VideoClipRequest):
@@ -71,7 +134,8 @@ async def push_video_clip_notif(data: VideoClipRequest):
 # Initialize the S3 client
 aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
-BUCKET_NAME = os.environ['BUCKET_NAME']
+BUCKET_NAME = "wingwatcher-videos"
+
 
 s3 = boto3.client(
     's3',
@@ -107,6 +171,27 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
         background_tasks.add_task(upload_to_s3, file.filename, file_contents, file.content_type or "image/png")
 
         return {"filename": file.filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/get-videos")
+async def get_videos():
+    try:
+        print('got here')
+        bucket_name = 'wingwatcher-videos'
+        bucket_list = s3.list_objects_v2(Bucket=bucket_name)
+        response = []
+        if 'Contents' in bucket_list:
+            for obj in bucket_list['Contents']:
+                if obj['Key'].startswith("videos/") and len(obj["Key"]) > 7:
+                    print(obj['Key'])
+                    response.append({"title": obj['Key'], "videoLink": "https://wingwatcher-videos.s3.amazonaws.com/" + obj['Key']})
+            return response
+        else:
+            print(f"No files found in bucket {bucket_name}")
+        return bucket_list
+        
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
