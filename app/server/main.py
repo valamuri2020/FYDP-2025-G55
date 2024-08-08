@@ -15,6 +15,9 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, W
 import sys
 from botocore import UNSIGNED
 from botocore.client import Config
+import subprocess
+import tempfile
+import shutil
 
 class RTNotificationTestInput(pydantic.BaseModel):
     message: str
@@ -90,7 +93,6 @@ async def websocket_endpoint(websocket: WebSocket):
         print("Client disconnected")
 
 # Route is hit by device, pushes notification to front-end
-# Mocking the front-end with rt-notification-test, to be removed later
 @app.get("/rt-notification-bird")
 async def push_rt_notif():
     # push the notification to the front-end
@@ -156,25 +158,6 @@ def upload_to_s3(file_name: str, file_content: bytes, content_type: str):
     except Exception as e:
         print(f"An error occurred: {str(e)}")
 
-@app.post("/upload")
-async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    try:
-        # Read file contents
-        file_contents = await file.read()
-        if file_contents is None:
-            print("File contents are None")
-            raise HTTPException(status_code=400, detail="File contents are None")
-        
-        print(f"Received file: {file.filename} - {len(file_contents)} bytes.")
-        
-        # Add the upload task to the background
-        background_tasks.add_task(upload_to_s3, file.filename, file_contents, file.content_type or "image/png")
-
-        return {"filename": file.filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-    
 @app.get("/get-videos")
 async def get_videos():
     try:
@@ -195,6 +178,71 @@ async def get_videos():
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+def is_jpeg(data):
+    # Check if the data starts with the JPEG start marker and ends with the JPEG end marker
+    return data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9')
+
+def process_bin_file(bin_file: UploadFile, output_dir: str, video_file: str):
+    with open(bin_file.filename, 'rb') as f:
+        data = f.read()
+    
+    start = 0
+    end = 0
+    image_number = 0
+    
+    image_files = []
+
+    while True:
+        start = data.find(b'\xff\xd8', end)
+        if start == -1:
+            break
+        end = data.find(b'\xff\xd9', start)
+        if end == -1:
+            break
+        end += 2
+        image_data = data[start:end]
+        
+        if is_jpeg(image_data):
+            with open(os.path.join(output_dir, f'frame_{image_number:04d}.jpg'), 'wb') as img_file:
+                img_file.write(image_data)
+                image_files.append(f'frame_{image_number:04d}.jpg')
+            image_number += 1
+
+        print(f'Extracted {image_number} images to {output_dir}')
+
+    # Create a video from the images using ffmpeg
+    if image_files:
+        # Assuming images are named image_001.jpg, image_002.jpg, ...
+        ffmpeg_input_pattern = os.path.join(output_dir, 'frame_%04d.jpg')
+        subprocess.run(['ffmpeg', '-framerate', '20', '-i', ffmpeg_input_pattern, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video_file])
+    
+        # Upload the video to S3
+        video_bytes = open(video_file, 'rb').read()
+        upload_to_s3(os.path.join("video_", os.path.basename(video_file)), video_bytes, 'video/mp4')
+
+        # Clean up the temporary files
+        shutil.rmtree(output_dir)
+        shutil.rmtree(os.path.dirname(video_file))
+    else:
+        print("No images were extracted from the .bin file.")
+
+
+@app.post("/upload-bin")
+async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    try:
+        temp_dir = "temp"
+        output_dir = os.path.join(temp_dir, "images")
+        os.makedirs(output_dir, exist_ok=True)
+        video_filepath = os.path.join(temp_dir, "videos", "output_video_" + file.filename + ".mp4")
+        os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
+        background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
+    
+        return {"filename": file.filename, "message": "Processing in background"}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     uvicorn.run(app=app, host=sys.argv[1], port=8000)
