@@ -54,12 +54,6 @@ load_dotenv()
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        await manager.broadcast(json.dumps({
-                        "action": "schedule_notification",
-                        "title": "test",
-                        "body": "body",
-                        "delay": 5
-                    }))
         await manager.broadcast(json.dumps({"message": "Connected to notification server"}))
         while True:
             data = await websocket.receive_text()
@@ -81,7 +75,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         "body": body,
                         "delay": delay
                     }))
-                    print("I got here")
                 else:
                     await manager.broadcast(json.dumps({"error": "Invalid action"}))
             
@@ -158,10 +151,28 @@ def upload_to_s3(file_name: str, file_content: bytes, content_type: str):
     except Exception as e:
         print(f"An error occurred: {str(e)}")
 
+@app.post("/upload")
+async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    try:
+        # Read file contents
+        file_contents = await file.read()
+        if file_contents is None:
+            print("File contents are None")
+            raise HTTPException(status_code=400, detail="File contents are None")
+        
+        print(f"Received file: {file.filename} - {len(file_contents)} bytes.")
+        
+        # Add the upload task to the background
+        background_tasks.add_task(upload_to_s3, file.filename, file_contents, file.content_type or "image/png")
+
+        return {"filename": file.filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/get-videos")
 async def get_videos():
     try:
-        print('got here')
         bucket_name = 'wingwatcher-videos'
         bucket_list = s3.list_objects_v2(Bucket=bucket_name)
         response = []
