@@ -89,7 +89,7 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/rt-notification-bird")
 async def push_rt_notif():
     # push the notification to the front-end
-    uri = "ws://34.205.232.48:8000/ws"
+    uri = "ws://54.161.131.68:8000/ws"
     async with websockets.connect(uri) as websocket:
         message = json.dumps({
             "action": "schedule_notification",
@@ -106,7 +106,7 @@ async def push_rt_notif():
 @app.get("/rt-notification-seed")
 async def push_rt_notif():
     # push the notification to the front-end
-    uri = "ws://34.205.232.48:8000/ws"
+    uri = "ws://54.161.131.68:8000/ws"
     async with websockets.connect(uri) as websocket:
         message = json.dumps({
             "action": "schedule_notification",
