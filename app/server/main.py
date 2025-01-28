@@ -2,6 +2,8 @@
 # to test the server: curl localhost:8000/rt-notification
 # curl --header "Content-Type: application/json" --request POST --data '{"message":"BIRD!!"}' http://localhost:8000/rt-notification
 import os
+import re
+from datetime import datetime
 from typing import List
 from dotenv import load_dotenv  
 import pydantic
@@ -130,6 +132,7 @@ async def push_video_clip_notif(data: VideoClipRequest):
 aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
 BUCKET_NAME = "wingwatcher-videos"
+THRESHOLD=10
 
 
 s3 = boto3.client(
@@ -151,7 +154,7 @@ def upload_to_s3(file_name: str, file_content: bytes, content_type: str):
     except Exception as e:
         print(f"An error occurred: {str(e)}")
 
-@app.post("/upload")
+@app.post("/upload-image")
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:
         # Read file contents
@@ -230,7 +233,7 @@ def process_bin_file(bin_file: UploadFile, output_dir: str, video_file: str):
     
         # Upload the video to S3
         video_bytes = open(video_file, 'rb').read()
-        upload_to_s3(os.path.join("video_", os.path.basename(video_file)), video_bytes, 'video/mp4')
+        upload_to_s3(os.path.join("videos", os.path.basename(video_file)), video_bytes, 'video/mp4')
 
         # Clean up the temporary files
         shutil.rmtree(output_dir)
@@ -245,7 +248,7 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         temp_dir = "temp"
         output_dir = os.path.join(temp_dir, "images")
         os.makedirs(output_dir, exist_ok=True)
-        video_filepath = os.path.join(temp_dir, "videos", "output_video_" + file.filename + ".mp4")
+        video_filepath = os.path.join(temp_dir, file.filename + ".mp4")
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
         background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
     
@@ -253,6 +256,102 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def extract_timestamp_from_key(key):
+    """
+    Extract timestamp from the S3 object key.
+    Assumes the filename contains a timestamp in the format YYYYMMDD_HHMMSS.
+    Adjust the regex pattern according to your filename structure.
+    """
+    match = re.search(r'(\d{8}_\d{6})', key)
+    if match:
+        return datetime.strptime(match.group(1), '%Y%m%d_%H%M%S')
+    return None
+
+def list_videos():
+    response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix="videos/")
+    video_list = response.get('Contents', [])
+    return video_list
+
+def group_video_files(video_list, threshold):
+
+    grouped_video_files = []
+    current_group = []
+
+    for video in video_list:
+        timestamp = extract_timestamp_from_key(video['Key'])
+        if not timestamp:
+            continue
+
+        if current_group:
+            last_timestamp = extract_timestamp_from_key(current_group[-1]['Key'])
+            if timestamp - last_timestamp <= threshold:
+                current_group.append(video)
+            else:
+                grouped_video_files.append(current_group)
+                current_group = [video]
+        else:
+            current_group.append(video)
+
+    return grouped_video_files
+
+def download_video(bucket, key, download_path):
+    """Download a video from S3 to the specified local path."""
+    s3.download_file(bucket, key, download_path)
+
+def concatenate_videos(video_paths, output_path):
+    """Concatenate multiple videos into a single video using ffmpeg."""
+    with tempfile.NamedTemporaryFile('w', delete=False) as list_file:
+        for path in video_paths:
+            list_file.write(f"file '{path}'\n")
+        list_file_path = list_file.name
+
+    subprocess.run(['ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_file_path,
+                    '-c', 'copy', output_path], check=True)
+    os.remove(list_file_path)
+
+def upload_video(bucket, key, file_path):
+    """Upload a video file to S3."""
+    s3.upload_file(file_path, bucket, key)
+
+def clean_up(files):
+    """Remove temporary files."""
+    for file in files:
+        os.remove(file)
+
+def delete_original_videos(bucket, keys):
+    """Delete multiple objects from an S3 bucket."""
+    objects = [{'Key': key} for key in keys]
+    response = s3.delete_objects(Bucket=bucket, Delete={'Objects': objects})
+    return response
+
+async def batch_video_files():
+    videos = list_videos()
+    videos.sort(key=lambda v: extract_timestamp_from_key(v['Key']))
+    grouped_vids = group_video_files(videos, THRESHOLD)
+
+    for i, group in enumerate(grouped_vids):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video_paths = []
+            original_keys = []
+
+            for video in group:
+                video_key = video['Key']
+                original_keys.append(video_key)
+                download_path = os.path.join(temp_dir, os.path.basename(video_key))
+                download_video(BUCKET_NAME, video_key, download_path)
+                video_paths.append(download_path)
+
+            output_filename = f"concatenated_{extract_timestamp_from_key(group[0]['Key']).strftime('%Y%m%d_%H%M%S')}.mp4"
+            output_path = os.path.join(temp_dir, output_filename)
+
+            concatenate_videos(video_paths, output_path)
+
+            upload_video(BUCKET_NAME, f"videos/{output_filename}", output_path)
+
+            delete_original_videos(BUCKET_NAME, original_keys)
+
+            clean_up(video_paths + [output_path])
 
 
 if __name__ == "__main__":
