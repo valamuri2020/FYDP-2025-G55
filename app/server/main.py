@@ -3,7 +3,7 @@
 # curl --header "Content-Type: application/json" --request POST --data '{"message":"BIRD!!"}' http://localhost:8000/rt-notification
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 from dotenv import load_dotenv  
 import pydantic
@@ -132,7 +132,10 @@ async def push_video_clip_notif(data: VideoClipRequest):
 aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
 BUCKET_NAME = "wingwatcher-videos"
-THRESHOLD=10
+THRESHOLD = timedelta(minutes=10)
+PROCESSED_BIN_COUNT = 0
+BIN_PROCESS_THRESHOLD = 10
+
 
 
 s3 = boto3.client(
@@ -154,7 +157,7 @@ def upload_to_s3(file_name: str, file_content: bytes, content_type: str):
     except Exception as e:
         print(f"An error occurred: {str(e)}")
 
-@app.post("/upload-image")
+@app.post("/upload")
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:
         # Read file contents
@@ -251,6 +254,11 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         video_filepath = os.path.join(temp_dir, file.filename + ".mp4")
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
         background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
+        
+        PROCESSED_BIN_COUNT += 1
+        if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
+            background_tasks.add_task(batch_video_files)
+            PROCESSED_BIN_COUNT = 0
     
         return {"filename": file.filename, "message": "Processing in background"}
     
@@ -325,7 +333,7 @@ def delete_original_videos(bucket, keys):
     response = s3.delete_objects(Bucket=bucket, Delete={'Objects': objects})
     return response
 
-async def batch_video_files():
+def batch_video_files():
     videos = list_videos()
     videos.sort(key=lambda v: extract_timestamp_from_key(v['Key']))
     grouped_vids = group_video_files(videos, THRESHOLD)
@@ -334,6 +342,8 @@ async def batch_video_files():
         with tempfile.TemporaryDirectory() as temp_dir:
             video_paths = []
             original_keys = []
+            if len(group) < 2:
+                continue
 
             for video in group:
                 video_key = video['Key']
@@ -342,7 +352,7 @@ async def batch_video_files():
                 download_video(BUCKET_NAME, video_key, download_path)
                 video_paths.append(download_path)
 
-            output_filename = f"concatenated_{extract_timestamp_from_key(group[0]['Key']).strftime('%Y%m%d_%H%M%S')}.mp4"
+            output_filename = f"{extract_timestamp_from_key(group[0]['Key']).strftime('%Y%m%d_%H%M%S')}.mp4"
             output_path = os.path.join(temp_dir, output_filename)
 
             concatenate_videos(video_paths, output_path)
@@ -352,6 +362,7 @@ async def batch_video_files():
             delete_original_videos(BUCKET_NAME, original_keys)
 
             clean_up(video_paths + [output_path])
+    print("Video collation and concatenation completed")
 
 
 if __name__ == "__main__":
