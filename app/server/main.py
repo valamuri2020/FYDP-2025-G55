@@ -3,7 +3,8 @@
 # curl --header "Content-Type: application/json" --request POST --data '{"message":"BIRD!!"}' http://localhost:8000/rt-notification
 import os
 import re
-from datetime import datetime, timedelta
+import datetime
+from datetime import timedelta
 from typing import List
 from dotenv import load_dotenv  
 import pydantic
@@ -99,37 +100,43 @@ def create_apns_jwt():
         private_key = key_file.read()
     payload = {
         "iss": TEAM_ID,
-        "iat": int(datetime.utcnow().timestamp())
+        "iat": int(datetime.datetime.now(datetime.UTC).timestamp())
     }
+    # print(jwt.encode(payload, private_key, algorithm="ES256", headers={"kid": APNS_KEY_ID}))
     return jwt.encode(payload, private_key, algorithm="ES256", headers={"kid": APNS_KEY_ID})
 
 async def send_push_notification(device_token: str, title: str, body: str):
     token = create_apns_jwt()
+    
     headers = {
         "authorization": f"bearer {token}",
         "apns-topic": APP_BUNDLE_ID,
-        "apns-priority": "10"  # Immediate delivery
+        "apns-priority": "10"
     }
+
     payload = {
         "aps": {
             "alert": {
                 "title": title,
                 "body": body
             },
-            "sound": "default"
+            "sound" : "default",
+            "badge" : 10,
         }
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{APNS_HOST}/3/device/{device_token}",
-            headers=headers,
-            json=payload
-        )
-        if response.status_code == 200:
-            print(f"Push notification sent to {device_token}")
-        else:
-            print(f"Failed to send notification: {response.status_code} - {response.text}")
+    async with httpx.AsyncClient(http2=True) as client:
+        try:
+            url = f"{APNS_HOST}/3/device/{device_token}"
+            print(f"Sending request to: {url}")
+            response = await client.post(url, headers=headers, json=payload)
+
+            print(f"APNs Response: {response.status_code}")
+            if response.status_code != 200:
+                print(f"Response Error: {response.text}")
+
+        except httpx.RequestError as e:
+            print(f"An error occurred while requesting APNs: {str(e)}")
 
 @app.post("/register-device")
 async def register_device_token(request: Request):
@@ -146,7 +153,7 @@ async def trigger_push_notification(title: str = "Bird Notification", body: str 
     tokens = fetch_device_tokens()
     if not tokens:
         raise HTTPException(status_code=400, detail="No device tokens registered")
-
+    # print(tokens)
     # Send the notification to all registered devices
     for token in tokens:
         await send_push_notification(token, title, body)
@@ -281,6 +288,7 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
 
 @app.get("/get-videos")
 async def get_videos():
+
     try:
         bucket_name = 'wingwatcher-videos'
         bucket_list = s3.list_objects_v2(Bucket=bucket_name)
@@ -376,7 +384,7 @@ def extract_timestamp_from_key(key):
     """
     match = re.search(r'(\d{8}_\d{6})', key)
     if match:
-        return datetime.strptime(match.group(1), '%Y%m%d_%H%M%S')
+        return datetime.datetime.strptime(match.group(1), '%Y%m%d_%H%M%S')
     return None
 
 def list_videos():
