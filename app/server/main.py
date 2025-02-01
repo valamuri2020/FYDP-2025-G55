@@ -13,13 +13,15 @@ import json
 import asyncio
 import websockets
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Request
 import sys
 from botocore import UNSIGNED
 from botocore.client import Config
 import subprocess
 import tempfile
 import shutil
+import jwt
+import httpx
 
 class RTNotificationTestInput(pydantic.BaseModel):
     message: str
@@ -51,6 +53,107 @@ manager = ConnectionManager()
 
 # Load environment variables
 load_dotenv()
+
+APNS_HOST = "https://api.sandbox.push.apple.com"  # Use this for development; switch to production when needed
+APNS_KEY_FILE = os.environ["APNS_KEY_FILE"]
+APNS_KEY_ID = os.environ["APNS_KEY_ID"]
+TEAM_ID = os.environ["TEAM_ID"]
+APP_BUNDLE_ID = os.environ["APP_BUNDLE_ID"]
+
+# --- S3 Configuration ---
+DEVICE_TOKENS_FILE = "device_tokens.json"  # File in S3 where device tokens are stored
+# BUCKET_NAME = os.environ["DEVICE_TOKEN_BUCKET"]
+
+def fetch_device_tokens() -> List[str]:
+    """Fetch the list of device tokens stored in the S3 bucket."""
+    try:
+        response = s3.get_object(Bucket=BUCKET_NAME, Key=DEVICE_TOKENS_FILE)
+        tokens = json.loads(response['Body'].read().decode('utf-8'))
+        return tokens.get("device_tokens", [])
+    except s3.exceptions.NoSuchKey:
+        # If file doesn't exist, return an empty list
+        return []
+    except Exception as e:
+        print(f"Error fetching device tokens: {str(e)}")
+        return []
+
+def store_device_token(device_token: str):
+    """Store a new device token in the S3 bucket."""
+    tokens = fetch_device_tokens()
+    if device_token not in tokens:
+        tokens.append(device_token)
+
+        # Update the token file in S3
+        s3.put_object(
+            Bucket=BUCKET_NAME,
+            Key=DEVICE_TOKENS_FILE,
+            Body=json.dumps({"device_tokens": tokens}),
+            ContentType='application/json'
+        )
+        print(f"Device token stored: {device_token}")
+    else:
+        print(f"Device token {device_token} is already registered.")
+
+def create_apns_jwt():
+    with open(APNS_KEY_FILE, "r") as key_file:
+        private_key = key_file.read()
+    payload = {
+        "iss": TEAM_ID,
+        "iat": int(datetime.utcnow().timestamp())
+    }
+    return jwt.encode(payload, private_key, algorithm="ES256", headers={"kid": APNS_KEY_ID})
+
+async def send_push_notification(device_token: str, title: str, body: str):
+    token = create_apns_jwt()
+    headers = {
+        "authorization": f"bearer {token}",
+        "apns-topic": APP_BUNDLE_ID,
+        "apns-priority": "10"  # Immediate delivery
+    }
+    payload = {
+        "aps": {
+            "alert": {
+                "title": title,
+                "body": body
+            },
+            "sound": "default"
+        }
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{APNS_HOST}/3/device/{device_token}",
+            headers=headers,
+            json=payload
+        )
+        if response.status_code == 200:
+            print(f"Push notification sent to {device_token}")
+        else:
+            print(f"Failed to send notification: {response.status_code} - {response.text}")
+
+@app.post("/register-device")
+async def register_device_token(request: Request):
+    data = await request.json()
+    device_token = data.get("device_token")
+    if device_token:
+        store_device_token(device_token)
+        return {"message": "Device token registered successfully"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid or missing device token")
+
+@app.post("/trigger-push")
+async def trigger_push_notification(title: str = "Bird Notification", body: str = "A bird has been spotted!"):
+    tokens = fetch_device_tokens()
+    if not tokens:
+        raise HTTPException(status_code=400, detail="No device tokens registered")
+
+    # Send the notification to all registered devices
+    for token in tokens:
+        await send_push_notification(token, title, body)
+
+    return {"message": "Push notification sent to all registered devices"}
+
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
