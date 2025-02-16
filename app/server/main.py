@@ -65,6 +65,8 @@ APP_BUNDLE_ID = os.environ["APP_BUNDLE_ID"]
 DEVICE_TOKENS_FILE = "device_tokens.json"  # File in S3 where device tokens are stored
 # BUCKET_NAME = os.environ["DEVICE_TOKEN_BUCKET"]
 
+LAST_CONNECTED_FILE = "last_connected.json"  # File in S3 where last connected time is stored
+
 def fetch_device_tokens() -> List[str]:
     """Fetch the list of device tokens stored in the S3 bucket."""
     try:
@@ -94,6 +96,15 @@ def store_device_token(device_token: str):
         print(f"Device token stored: {device_token}")
     else:
         print(f"Device token {device_token} is already registered.")
+
+def store_last_connected(last_connected: str):
+    # Update the token file in S3
+    s3.put_object(
+        Bucket=BUCKET_NAME,
+        Key=LAST_CONNECTED_FILE,
+        Body=json.dumps({"last_connected": datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}),
+        ContentType='application/json'
+    )
 
 def create_apns_jwt():
     with open(APNS_KEY_FILE, "r") as key_file:
@@ -138,6 +149,11 @@ async def send_push_notification(device_token: str, title: str, body: str):
         except httpx.RequestError as e:
             print(f"An error occurred while requesting APNs: {str(e)}")
 
+@app.get("/save-last-connected")
+async def register_device_token():
+    store_last_connected()
+    return {"message": "Saved last connected timestamp"}
+
 @app.post("/register-device")
 async def register_device_token(request: Request):
     data = await request.json()
@@ -148,8 +164,8 @@ async def register_device_token(request: Request):
     else:
         raise HTTPException(status_code=400, detail="Invalid or missing device token")
 
-@app.post("/trigger-push")
-async def trigger_push_notification(title: str = "Bird Notification", body: str = "A bird has been spotted!"):
+@app.post("/rt-notification-bird")
+async def trigger_push_notification_bird(title: str = "Bird arrived", body: str = "A bird has shown up at the birdfeeder!"):
     tokens = fetch_device_tokens()
     if not tokens:
         raise HTTPException(status_code=400, detail="No device tokens registered")
@@ -160,7 +176,17 @@ async def trigger_push_notification(title: str = "Bird Notification", body: str 
 
     return {"message": "Push notification sent to all registered devices"}
 
+@app.post("/rt-notification-seed")
+async def trigger_push_notification_seed(title: str = "Seed is low", body: str = "Please refill the seed in the birdfeeder"):
+    tokens = fetch_device_tokens()
+    if not tokens:
+        raise HTTPException(status_code=400, detail="No device tokens registered")
+    # print(tokens)
+    # Send the notification to all registered devices
+    for token in tokens:
+        await send_push_notification(token, title, body)
 
+    return {"message": "Push notification sent to all registered devices"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -197,40 +223,40 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
         print("Client disconnected")
 
-# Route is hit by device, pushes notification to front-end
-@app.get("/rt-notification-bird")
-async def push_rt_notif():
-    # push the notification to the front-end
-    uri = "ws://54.161.131.68:8000/ws"
-    async with websockets.connect(uri) as websocket:
-        message = json.dumps({
-            "action": "schedule_notification",
-            "title": "Bird arrived",
-            "body": "A bird has shown up at the birdfeeder!",
-            "delay": 1
-        })
-        print(f"Sending message: {message}")
-        await websocket.send(message)
-        print("Message sent, waiting for response...")
-        response = await websocket.recv()
-        print(f"Received response: {response}")
+# # Route is hit by device, pushes notification to front-end
+# @app.get("/rt-notification-bird")
+# async def push_rt_notif():
+#     # push the notification to the front-end
+#     uri = "ws://54.161.131.68:8000/ws"
+#     async with websockets.connect(uri) as websocket:
+#         message = json.dumps({
+#             "action": "schedule_notification",
+#             "title": "Bird arrived",
+#             "body": "A bird has shown up at the birdfeeder!",
+#             "delay": 1
+#         })
+#         print(f"Sending message: {message}")
+#         await websocket.send(message)
+#         print("Message sent, waiting for response...")
+#         response = await websocket.recv()
+#         print(f"Received response: {response}")
 
-@app.get("/rt-notification-seed")
-async def push_rt_notif():
-    # push the notification to the front-end
-    uri = "ws://54.161.131.68:8000/ws"
-    async with websockets.connect(uri) as websocket:
-        message = json.dumps({
-            "action": "schedule_notification",
-            "title": "Seed is low",
-            "body": "Please refill the seed in the birdfeeder",
-            "delay": 1
-        })
-        print(f"Sending message: {message}")
-        await websocket.send(message)
-        print("Message sent, waiting for response...")
-        response = await websocket.recv()
-        print(f"Received response: {response}")
+# @app.get("/rt-notification-seed")
+# async def push_rt_notif():
+#     # push the notification to the front-end
+#     uri = "ws://54.161.131.68:8000/ws"
+#     async with websockets.connect(uri) as websocket:
+#         message = json.dumps({
+#             "action": "schedule_notification",
+#             "title": "Seed is low",
+#             "body": "Please refill the seed in the birdfeeder",
+#             "delay": 1
+#         })
+#         print(f"Sending message: {message}")
+#         await websocket.send(message)
+#         print("Message sent, waiting for response...")
+#         response = await websocket.recv()
+#         print(f"Received response: {response}")
     
 @app.post("/video-clip")
 async def push_video_clip_notif(data: VideoClipRequest):
@@ -366,10 +392,10 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
         background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
         
-        PROCESSED_BIN_COUNT += 1
-        if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
-            background_tasks.add_task(batch_video_files)
-            PROCESSED_BIN_COUNT = 0
+        # PROCESSED_BIN_COUNT += 1
+        # if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
+        #     background_tasks.add_task(batch_video_files)
+        #     PROCESSED_BIN_COUNT = 0
     
         return {"filename": file.filename, "message": "Processing in background"}
     
