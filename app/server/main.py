@@ -333,6 +333,20 @@ async def get_videos():
         print(f"An error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/get-last-connected")
+async def fetch_last_connected_timestamp() -> List[str]:
+    """Fetch the list of device tokens stored in the S3 bucket."""
+    try:
+        response = s3.get_object(Bucket=BUCKET_NAME, Key=LAST_CONNECTED_FILE)
+        tokens = json.loads(response['Body'].read().decode('utf-8'))
+        return tokens.get("last_connected", [])
+    except s3.exceptions.NoSuchKey:
+        # If file doesn't exist, return an empty list
+        return []
+    except Exception as e:
+        print(f"Error fetching last connected: {str(e)}")
+        return []
+
 def is_jpeg(data):
     # Check if the data starts with the JPEG start marker and ends with the JPEG end marker
     return data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9')
