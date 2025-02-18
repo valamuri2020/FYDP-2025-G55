@@ -268,7 +268,7 @@ async def push_video_clip_notif(data: VideoClipRequest):
 aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
 BUCKET_NAME = "wingwatcher-videos"
-THRESHOLD = timedelta(minutes=10)
+THRESHOLD = timedelta(seconds=10)
 PROCESSED_BIN_COUNT = 0
 BIN_PROCESS_THRESHOLD = 10
 
@@ -406,10 +406,10 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
         background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
         
-        # PROCESSED_BIN_COUNT += 1
-        # if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
-        #     background_tasks.add_task(batch_video_files)
-        #     PROCESSED_BIN_COUNT = 0
+        PROCESSED_BIN_COUNT += 1
+        if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
+            background_tasks.add_task(batch_video_files)
+            PROCESSED_BIN_COUNT = 0
     
         return {"filename": file.filename, "message": "Processing in background"}
     
@@ -451,6 +451,9 @@ def group_video_files(video_list, threshold):
                 current_group = [video]
         else:
             current_group.append(video)
+    
+    if current_group not in grouped_video_files:
+        grouped_video_files.append(current_group)
 
     return grouped_video_files
 
@@ -486,6 +489,7 @@ def delete_original_videos(bucket, keys):
 
 def batch_video_files():
     videos = list_videos()
+    videos = [v for v in videos if extract_timestamp_from_key(v['Key']) is not None]
     videos.sort(key=lambda v: extract_timestamp_from_key(v['Key']))
     grouped_vids = group_video_files(videos, THRESHOLD)
 
