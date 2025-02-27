@@ -97,7 +97,7 @@ def store_device_token(device_token: str):
     else:
         print(f"Device token {device_token} is already registered.")
 
-def store_last_connected(last_connected: str):
+def store_last_connected():
     # Update the token file in S3
     s3.put_object(
         Bucket=BUCKET_NAME,
@@ -150,7 +150,7 @@ async def send_push_notification(device_token: str, title: str, body: str):
             print(f"An error occurred while requesting APNs: {str(e)}")
 
 @app.get("/save-last-connected")
-async def register_device_token():
+async def save_last_connected():
     store_last_connected()
     return {"message": "Saved last connected timestamp"}
 
@@ -334,12 +334,12 @@ async def get_videos():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-last-connected")
-async def fetch_last_connected_timestamp() -> List[str]:
+async def fetch_last_connected_timestamp():
     """Fetch the list of device tokens stored in the S3 bucket."""
     try:
         response = s3.get_object(Bucket=BUCKET_NAME, Key=LAST_CONNECTED_FILE)
-        tokens = json.loads(response['Body'].read().decode('utf-8'))
-        return tokens.get("last_connected", [])
+        token = json.loads(response['Body'].read().decode('utf-8'))
+        return token
     except s3.exceptions.NoSuchKey:
         # If file doesn't exist, return an empty list
         return []
