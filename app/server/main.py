@@ -57,7 +57,7 @@ manager = ConnectionManager()
 # Load environment variables
 load_dotenv()
 
-APNS_HOST = "https://api.sandbox.push.apple.com"  # Use this for development; switch to production when needed
+APNS_HOST = "https://api.push.apple.com"  # Use this for development; switch to production when needed
 APNS_KEY_FILE = os.environ["APNS_KEY_FILE"]
 APNS_KEY_ID = os.environ["APNS_KEY_ID"]
 TEAM_ID = os.environ["TEAM_ID"]
