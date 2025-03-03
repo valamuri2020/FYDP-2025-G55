@@ -5,6 +5,7 @@ import os
 import re
 import datetime
 from datetime import timedelta
+from pytz import timezone
 from typing import List
 from dotenv import load_dotenv  
 import pydantic
@@ -99,10 +100,12 @@ def store_device_token(device_token: str):
 
 def store_last_connected():
     # Update the token file in S3
+    tz = timezone('EST')
+    time = datetime.datetime.now(tz) 
     s3.put_object(
         Bucket=BUCKET_NAME,
         Key=LAST_CONNECTED_FILE,
-        Body=json.dumps({"last_connected": datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}),
+        Body=json.dumps({"last_connected": time.strftime("%Y%m%d_%H%M%S")}),
         ContentType='application/json'
     )
 
