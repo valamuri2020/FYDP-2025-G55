@@ -168,7 +168,7 @@ async def register_device_token(request: Request):
     else:
         raise HTTPException(status_code=400, detail="Invalid or missing device token")
 
-@app.post("/rt-notification-bird")
+@app.get("/rt-notification-bird")
 async def trigger_push_notification_bird(title: str = "Bird arrived", body: str = "A bird has shown up at the birdfeeder!"):
     tokens = fetch_device_tokens()
     if not tokens:
@@ -180,7 +180,7 @@ async def trigger_push_notification_bird(title: str = "Bird arrived", body: str 
 
     return {"message": "Push notification sent to all registered devices"}
 
-@app.post("/rt-notification-seed")
+@app.get("/rt-notification-seed")
 async def trigger_push_notification_seed(title: str = "Seed is low", body: str = "Please refill the seed in the birdfeeder"):
     tokens = fetch_device_tokens()
     if not tokens:
