@@ -406,10 +406,10 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
         background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
         
-        PROCESSED_BIN_COUNT += 1
-        if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
-            background_tasks.add_task(batch_video_files)
-            PROCESSED_BIN_COUNT = 0
+        # PROCESSED_BIN_COUNT += 1
+        # if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
+        #     background_tasks.add_task(batch_video_files)
+        #     PROCESSED_BIN_COUNT = 0
     
         return {"filename": file.filename, "message": "Processing in background"}
     
