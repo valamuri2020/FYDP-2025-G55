@@ -419,6 +419,25 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/upload-image")
+async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    try:
+        # Read file contents
+        file_contents = await file.read()
+        if file_contents is None:
+            print("File contents are None")
+            raise HTTPException(status_code=400, detail="File contents are None")
+        
+        print(f"Received file: {file.filename} - {len(file_contents)} bytes.")
+        
+        # Add the upload task to the background
+        background_tasks.add_task(upload_to_s3, "images/" + file.filename, file_contents, file.content_type or "image/png")
+
+        return {"filename": file.filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 def extract_timestamp_from_key(key):
     """
