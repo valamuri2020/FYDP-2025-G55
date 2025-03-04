@@ -11,7 +11,6 @@ from typing import List
 from dotenv import load_dotenv  
 import pydantic
 import uvicorn
-import cv2
 import boto3
 import json
 import asyncio
@@ -25,7 +24,6 @@ import subprocess
 import tempfile
 import shutil
 import jwt
-import glob
 import httpx
 
 class RTNotificationTestInput(pydantic.BaseModel):
