@@ -11,6 +11,7 @@ from typing import List
 from dotenv import load_dotenv  
 import pydantic
 import uvicorn
+import cv2
 import boto3
 import json
 import asyncio
@@ -24,6 +25,7 @@ import subprocess
 import tempfile
 import shutil
 import jwt
+import glob
 import httpx
 
 class RTNotificationTestInput(pydantic.BaseModel):
@@ -355,10 +357,10 @@ def is_jpeg(data):
     # Check if the data starts with the JPEG start marker and ends with the JPEG end marker
     return data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9')
 
-def process_bin_file(bin_file: UploadFile, output_dir: str, video_file: str):
-    # with open(bin_file.filename, 'rb') as f:
-    #     data = f.read()
-    data = bin_file.file.read()
+def process_bin_file(data, output_dir: str, video_file: str):
+    # data = await bin_file.read()
+    # print(data)
+
     start = 0
     end = 0
     image_number = 0
@@ -385,13 +387,28 @@ def process_bin_file(bin_file: UploadFile, output_dir: str, video_file: str):
 
     # Create a video from the images using ffmpeg
     if image_files:
+
+        # images = sorted(glob.glob(os.path.join("temp/images", "frame_*.jpg")), 
+        #         key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+        # frame = cv2.imread(images[0])
+        # h, w, _ = frame.shape
+        # fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Use 'XVID' for .avi files
+        # video_writer = cv2.VideoWriter(video_file, fourcc, 20, (w, h))
+
+        # for img_path in images:
+        #     frame = cv2.imread(img_path)
+        #     video_writer.write(frame)
+        
+        # video_writer.release()
+
         # Assuming images are named image_001.jpg, image_002.jpg, ...
         ffmpeg_input_pattern = os.path.join(output_dir, 'frame_%04d.jpg')
+        
         subprocess.run(['ffmpeg', '-framerate', '20', '-i', ffmpeg_input_pattern, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video_file])
-    
+        # print("got here")
         # Upload the video to S3
-        video_bytes = open(video_file, 'rb').read()
-        upload_to_s3(os.path.join("videos", os.path.basename(video_file)), video_bytes, 'video/mp4')
+        # video_bytes = open(video_file, 'rb').read()
+        # upload_to_s3(os.path.join("videos", os.path.basename(video_file)), video_bytes, 'video/mp4')
 
         # Clean up the temporary files
         shutil.rmtree(output_dir)
@@ -409,7 +426,14 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         video_filepath = os.path.join(temp_dir, file.filename + ".mp4")
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
 
-        background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
+        file_contents = await file.read()
+        if file_contents is None:
+            print("File contents are None")
+            raise HTTPException(status_code=400, detail="File contents are None")
+        
+        print(f"Received file: {file.filename} - {len(file_contents)} bytes.")
+        process_bin_file(file_contents, output_dir, video_filepath)
+        # background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
         
         # PROCESSED_BIN_COUNT += 1
         # if PROCESSED_BIN_COUNT >= BIN_PROCESS_THRESHOLD:
