@@ -356,9 +356,9 @@ def is_jpeg(data):
     return data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9')
 
 def process_bin_file(bin_file: UploadFile, output_dir: str, video_file: str):
-    with open(bin_file.filename, 'rb') as f:
-        data = f.read()
-    
+    # with open(bin_file.filename, 'rb') as f:
+    #     data = f.read()
+    data = bin_file.file.read()
     start = 0
     end = 0
     image_number = 0
@@ -408,6 +408,7 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         os.makedirs(output_dir, exist_ok=True)
         video_filepath = os.path.join(temp_dir, file.filename + ".mp4")
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
+
         background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
         
         # PROCESSED_BIN_COUNT += 1
