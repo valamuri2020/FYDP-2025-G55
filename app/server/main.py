@@ -418,6 +418,7 @@ def process_bin_file(data, output_dir: str, video_file: str):
 @app.post("/upload-bin")
 async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:
+        print("GOT THIS FAR")
         temp_dir = "temp"
         output_dir = os.path.join(temp_dir, "images")
         os.makedirs(output_dir, exist_ok=True)
