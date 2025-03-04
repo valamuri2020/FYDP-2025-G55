@@ -405,8 +405,8 @@ def process_bin_file(data, output_dir: str, video_file: str):
         subprocess.run(['ffmpeg', '-framerate', '20', '-i', ffmpeg_input_pattern, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video_file])
         # print("got here")
         # Upload the video to S3
-        # video_bytes = open(video_file, 'rb').read()
-        # upload_to_s3(os.path.join("videos", os.path.basename(video_file)), video_bytes, 'video/mp4')
+        video_bytes = open(video_file, 'rb').read()
+        upload_to_s3(os.path.join("videos", os.path.basename(video_file)), video_bytes, 'video/mp4')
 
         # Clean up the temporary files
         shutil.rmtree(output_dir)
