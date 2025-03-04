@@ -418,11 +418,11 @@ def process_bin_file(data, output_dir: str, video_file: str):
 @app.post("/upload-bin")
 async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:
-        print("GOT THIS FAR")
+        filename = file.filename.lstrip("/")
         temp_dir = "temp"
         output_dir = os.path.join(temp_dir, "images")
         os.makedirs(output_dir, exist_ok=True)
-        video_filepath = os.path.join(temp_dir, file.filename + ".mp4")
+        video_filepath = os.path.join(temp_dir, filename + ".mp4")
         os.makedirs(os.path.dirname(video_filepath), exist_ok=True)
 
         file_contents = await file.read()
@@ -430,7 +430,7 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
             print("File contents are None")
             raise HTTPException(status_code=400, detail="File contents are None")
         
-        print(f"Received file: {file.filename} - {len(file_contents)} bytes.")
+        print(f"Received file: {filename} - {len(file_contents)} bytes.")
         process_bin_file(file_contents, output_dir, video_filepath)
         # background_tasks.add_task(process_bin_file, file, output_dir, video_filepath)
         
@@ -448,17 +448,18 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:
         # Read file contents
+        filename = file.filename.lstrip("/")
         file_contents = await file.read()
         if file_contents is None:
             print("File contents are None")
             raise HTTPException(status_code=400, detail="File contents are None")
         
-        print(f"Received file: {file.filename} - {len(file_contents)} bytes.")
+        print(f"Received file: {filename} - {len(file_contents)} bytes.")
         
         # Add the upload task to the background
-        background_tasks.add_task(upload_to_s3, "images/" + file.filename, file_contents, file.content_type or "image/png")
+        background_tasks.add_task(upload_to_s3, "images/" + filename, file_contents, file.content_type or "image/png")
 
-        return {"filename": file.filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
+        return {"filename": filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
