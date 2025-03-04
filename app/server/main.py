@@ -69,6 +69,8 @@ DEVICE_TOKENS_FILE = "device_tokens.json"  # File in S3 where device tokens are 
 
 LAST_CONNECTED_FILE = "last_connected.json"  # File in S3 where last connected time is stored
 
+LIVE_STREAM_FILE = "live_stream.json" 
+
 def fetch_device_tokens() -> List[str]:
     """Fetch the list of device tokens stored in the S3 bucket."""
     try:
@@ -109,6 +111,17 @@ def store_last_connected():
         Body=json.dumps({"last_connected": time.strftime("%Y%m%d_%H%M%S")}),
         ContentType='application/json'
     )
+
+def store_live_stream():
+    # Update the token file in S3
+    time = datetime.datetime.now() 
+    s3.put_object(
+        Bucket=BUCKET_NAME,
+        Key=LIVE_STREAM_FILE,
+        Body=json.dumps({"live_stream": time.strftime("%Y%m%d_%H%M%S")}),
+        ContentType='application/json'
+    )
+
 
 def create_apns_jwt():
     with open(APNS_KEY_FILE, "r") as key_file:
@@ -152,6 +165,11 @@ async def send_push_notification(device_token: str, title: str, body: str):
 
         except httpx.RequestError as e:
             print(f"An error occurred while requesting APNs: {str(e)}")
+
+@app.get("/save-live-stream")
+async def save_last_connected():
+    store_live_stream()
+    return {"message": "Saved live stream timestamp"}
 
 @app.get("/save-last-connected")
 async def save_last_connected():
@@ -350,6 +368,26 @@ async def fetch_last_connected_timestamp():
     except Exception as e:
         print(f"Error fetching last connected: {str(e)}")
         return []
+    
+@app.get("/start-live-stream")
+async def fetch_live_stream_timestamp():
+    """Fetch the list of device tokens stored in the S3 bucket."""
+    try:
+        response = s3.get_object(Bucket=BUCKET_NAME, Key=LIVE_STREAM_FILE)
+        token = json.loads(response['Body'].read().decode('utf-8'))
+        time_str = token.get("live_stream")
+        time = datetime.datetime.strptime(time_str, "%Y%m%d_%H%M%S")
+        timedelta_now = datetime.datetime.now() - time
+        if timedelta_now < timedelta(minutes=2):
+            return True
+        else:
+            return False
+    except s3.exceptions.NoSuchKey:
+        # If file doesn't exist, return an empty list
+        return False
+    except Exception as e:
+        print(f"Error fetching live stream: {str(e)}")
+        return False
 
 def is_jpeg(data):
     # Check if the data starts with the JPEG start marker and ends with the JPEG end marker
