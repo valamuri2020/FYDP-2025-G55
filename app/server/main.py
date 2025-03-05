@@ -506,10 +506,11 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
         
         print(f"Received file: {filename} - {len(file_contents)} bytes.")
 
-        rgb_array = convert_rgb565_to_rgb888(file_contents, 320, 240)
+        # rgb_array = convert_rgb565_to_rgb888(file_contents, 320, 240)
+
         
         # Create a PIL image from the numpy array
-        image = Image.fromarray(rgb_array, 'RGB')
+        image = Image.fromarray(file_contents, 'RGB')
 
         buffer = BytesIO()
         # Ensure the format matches your content type; here, we use PNG
