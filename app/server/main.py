@@ -4,6 +4,9 @@
 import os
 import re
 import datetime
+import numpy as np
+from io import BytesIO
+from PIL import Image
 from datetime import timedelta
 import pytz
 from pytz import timezone
@@ -468,7 +471,29 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def convert_rgb565_to_rgb888(frame_data, width, height):
+    """
+    Convert a raw RGB565 byte array to an RGB888 numpy array.
+    Each pixel in RGB565 is 2 bytes.
+    """
+    # Convert the raw bytes to a numpy array of uint16 values.
+    # Note: The data may be little-endian; adjust if necessary.
+    arr = np.frombuffer(frame_data, dtype=np.uint16).reshape((height, width))
     
+    # Extract the red, green, and blue components.
+    # For RGB565:
+    #   - red:   bits 11-15 (5 bits)
+    #   - green: bits 5-10  (6 bits)
+    #   - blue:  bits 0-4   (5 bits)
+    r = ((arr >> 11) & 0x1F) * 255 // 31
+    g = ((arr >> 5)  & 0x3F) * 255 // 63
+    b = (arr & 0x1F) * 255 // 31
+
+    # Stack channels into a 3D array
+    rgb_array = np.dstack((r, g, b)).astype(np.uint8)
+    return rgb_array
+
 @app.post("/upload-image")
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:
@@ -480,9 +505,19 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
             raise HTTPException(status_code=400, detail="File contents are None")
         
         print(f"Received file: {filename} - {len(file_contents)} bytes.")
+
+        rgb_array = convert_rgb565_to_rgb888(file_contents, 320, 240)
+        
+        # Create a PIL image from the numpy array
+        image = Image.fromarray(rgb_array, 'RGB')
+
+        buffer = BytesIO()
+        # Ensure the format matches your content type; here, we use PNG
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
         
         # Add the upload task to the background
-        background_tasks.add_task(upload_to_s3, "images/" + filename, file_contents, file.content_type or "image/png")
+        background_tasks.add_task(upload_to_s3, "images/" + filename, image, file.content_type or "image/png")
 
         return {"filename": filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
     except Exception as e:
