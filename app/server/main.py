@@ -3,11 +3,9 @@
 # curl --header "Content-Type: application/json" --request POST --data '{"message":"BIRD!!"}' http://localhost:8000/rt-notification
 import os
 import re
-import numpy as np
 import datetime
 from datetime import timedelta
 import pytz
-from PIL import Image
 from pytz import timezone
 from typing import List
 from dotenv import load_dotenv  
@@ -395,67 +393,51 @@ def is_jpeg(data):
     # Check if the data starts with the JPEG start marker and ends with the JPEG end marker
     return data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9')
 
-def convert_rgb565_to_rgb888(frame_data, width, height):
-    """
-    Convert a raw RGB565 byte array to an RGB888 numpy array.
-    Each pixel in RGB565 is 2 bytes.
-    """
-    # Convert the raw bytes to a numpy array of uint16 values.
-    # Note: The data may be little-endian; adjust if necessary.
-    arr = np.frombuffer(frame_data, dtype=np.uint16).reshape((height, width))
-    
-    # Extract the red, green, and blue components.
-    # For RGB565:
-    #   - red:   bits 11-15 (5 bits)
-    #   - green: bits 5-10  (6 bits)
-    #   - blue:  bits 0-4   (5 bits)
-    r = ((arr >> 11) & 0x1F) * 255 // 31
-    g = ((arr >> 5)  & 0x3F) * 255 // 63
-    b = (arr & 0x1F) * 255 // 31
+def process_bin_file(data, output_dir: str, video_file: str):
+    # data = await bin_file.read()
+    # print(data)
 
-    # Stack channels into a 3D array
-    rgb_array = np.dstack((r, g, b)).astype(np.uint8)
-    return rgb_array
-
-def process_bin_file(data, output_dir: str, video_file: str, width=320, height=240):
-
-    frame_size = width * height * 2
-    total_frames = len(data) // frame_size
+    start = 0
+    end = 0
+    image_number = 0
     
     image_files = []
 
-    for frame_number in range(total_frames):
-        start = frame_number * frame_size
-        end = start + frame_size
-        frame_data = data[start:end]
+    while True:
+        start = data.find(b'\xff\xd8', end)
+        if start == -1:
+            break
+        end = data.find(b'\xff\xd9', start)
+        if end == -1:
+            break
+        end += 2
+        image_data = data[start:end]
         
-        # Convert raw frame data to an RGB888 image array.
-        rgb_array = convert_rgb565_to_rgb888(frame_data, width, height)
-        
-        # Create a PIL image from the numpy array
-        image = Image.fromarray(rgb_array, 'RGB')
-        image_filename = os.path.join(output_dir, f'frame_{frame_number:04d}.jpg')
-        image.save(image_filename, format="JPEG")
-        image_files.append(image_filename)
+        if is_jpeg(image_data):
+            with open(os.path.join(output_dir, f'frame_{image_number:04d}.jpg'), 'wb') as img_file:
+                img_file.write(image_data)
+                image_files.append(f'frame_{image_number:04d}.jpg')
+            image_number += 1
 
+        print(f'Extracted {image_number} images to {output_dir}')
+
+    # Create a video from the images using ffmpeg
     if image_files:
-        # ffmpeg expects a sequence pattern like frame_%04d.jpg
+
+        # Assuming images are named image_001.jpg, image_002.jpg, ...
         ffmpeg_input_pattern = os.path.join(output_dir, 'frame_%04d.jpg')
-        subprocess.run([
-            'ffmpeg', '-framerate', '20', '-i', ffmpeg_input_pattern,
-            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video_file
-        ])
         
-        # Read the video file bytes and upload to S3 (assuming upload_to_s3 is defined elsewhere)
-        with open(video_file, 'rb') as vf:
-            video_bytes = vf.read()
+        subprocess.run(['ffmpeg', '-framerate', '20', '-i', ffmpeg_input_pattern, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video_file])
+        # print("got here")
+        # Upload the video to S3
+        video_bytes = open(video_file, 'rb').read()
         upload_to_s3(os.path.join("videos", os.path.basename(video_file)), video_bytes, 'video/mp4')
 
-        # Clean up temporary files
+        # Clean up the temporary files
         shutil.rmtree(output_dir)
         shutil.rmtree(os.path.dirname(video_file))
     else:
-        print("No frames were extracted from the .bin file.")
+        print("No images were extracted from the .bin file.")
 
 
 @app.post("/upload-bin")
@@ -472,7 +454,6 @@ async def upload_bin_file(background_tasks: BackgroundTasks, file: UploadFile = 
         if file_contents is None:
             print("File contents are None")
             raise HTTPException(status_code=400, detail="File contents are None")
-        
         
         print(f"Received file: {filename} - {len(file_contents)} bytes.")
         process_bin_file(file_contents, output_dir, video_filepath)
@@ -499,14 +480,9 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
             raise HTTPException(status_code=400, detail="File contents are None")
         
         print(f"Received file: {filename} - {len(file_contents)} bytes.")
-
-        rgb_array = convert_rgb565_to_rgb888(file_contents, 320, 240)
-        
-        # Create a PIL image from the numpy array
-        image = Image.fromarray(rgb_array, 'RGB')
         
         # Add the upload task to the background
-        background_tasks.add_task(upload_to_s3, "images/" + filename, image, file.content_type or "image/png")
+        background_tasks.add_task(upload_to_s3, "images/" + filename, file_contents, file.content_type or "image/png")
 
         return {"filename": filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
     except Exception as e:
