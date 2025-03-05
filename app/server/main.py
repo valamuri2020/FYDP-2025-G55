@@ -517,7 +517,7 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
         buffer.seek(0)
         
         # Add the upload task to the background
-        background_tasks.add_task(upload_to_s3, "images/" + filename, image, file.content_type or "image/png")
+        background_tasks.add_task(upload_to_s3, "images/" + filename, buffer, file.content_type or "image/png")
 
         return {"filename": filename, "bucket": BUCKET_NAME, "message": "Upload in progress"}
     except Exception as e:
