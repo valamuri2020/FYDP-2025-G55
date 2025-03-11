@@ -106,7 +106,7 @@ def store_device_token(device_token: str):
 
 def store_last_connected():
     # Update the token file in S3
-    tz = timezone('ET')
+    tz = timezone('EDT')
     time = datetime.datetime.now(tz) 
     s3.put_object(
         Bucket=BUCKET_NAME,
